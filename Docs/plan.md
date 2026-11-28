@@ -14,7 +14,7 @@ Este documento só tem o que ainda não existe. O que já está a funcionar (ser
 - o `charger_photos.py` do NAP dashboard a perguntar também ao nosso Panoramax;
 - entrada na federação, depois da conversa com a comunidade;
 - categorias das fotos e ferramentas para as mover (ver *Categorias das fotos*);
-- hubs, quando o modelo do NAP dashboard os publicar (ver *Hubs*).
+- locais (hubs e estações), quando o modelo do NAP dashboard os publicar (ver *Locais: hubs e estações*).
 3. **Bot e agentes.** Bot do OSM (depois da aprovação da comunidade) e o `photos.json` lido pelo NAP dashboard e pelo ohmigo.
 4. **Desfocagem no servidor**, quando houver uma GPU a um custo razoável.
 
@@ -37,9 +37,9 @@ Falta uma tabela:
 | Tabela | Colunas principais | Notas |
 | --- | --- | --- |
 | `osm_edits` | `osm_element`, `key`, `value`, `photo_id`, `changeset`, `written_at` | O que o bot escreveu no OSM, para só alterar valores dele |
-| `hubs` | `id`, `name`, `kind`, `osm_element`, `lat`, `lon`, `status`, `updated_at` | Os hubs do modelo do NAP dashboard (ver *Hubs*). `status`: `active` ou `dissolved` |
+| `locations` | `id`, `level` (`hub` ou `estacao`), `name`, `kind`, `osm_element`, `hub_id`, `lat`, `lon`, `status`, `updated_at` | Os hubs e as estações do modelo do NAP dashboard (ver *Locais: hubs e estações*). `hub_id`: o hub de uma estação que está dentro de um. `status`: `active` ou `dissolved` |
 
-E colunas novas: `stations.hub_id`; `photos.category`, `photos.hub_id` e `photos.part` (ver *Categorias das fotos*).
+E colunas novas: `stations.location_id`; `photos.category`, `photos.location_id` e `photos.part` (ver *Categorias das fotos*).
 
 E uma coluna para o motivo de uma recusa em `photos` (hoje fica só o estado `removed`, quem decidiu e quando).
 
@@ -105,31 +105,36 @@ O pseudónimo já se escolhe na conta ([`arquitetura.md`](arquitetura.md), *Cré
 - Moderadores: só o responsável do projeto no lançamento; a lista de moderadores da comunidade vem depois. Com um só moderador, o prazo de 72 h depende de ele estar disponível; como a foto fica oculta logo, o risco é atraso, não exposição.
 - Apagar a conta a partir da própria conta (hoje é por email, como diz a política de privacidade).
 
-## Hubs
+## Locais: hubs e estações
 
-Um hub é um lugar com vários postos: um centro comercial, uma área de serviço, um parque. Nenhum operador o publica, porque cada um publica só os seus postos. É um lugar do OpenStreetMap, com contorno, que contém dois ou mais postos, e o nome é o `name` desse lugar no OSM.
+Os postos agrupam-se em dois níveis, os dois vindos do OpenStreetMap:
 
-O que é um hub, o ID, o nome, como se divide e o que quem lê o modelo pode esperar está no [`Docs/hubs.md` do Architecture](https://github.com/CarregaErvilhas/Architecture/blob/main/Docs/hubs.md), a cópia única do grupo. Só o NAP dashboard decide os hubs (`hubs` no modelo da rede). O olh'o'posto não define hubs nem edita os nomes; esta secção é a parte dele.
+- **Estação:** a área `amenity=charging_station` que os mapeadores desenham à volta dos carregadores de um operador. Por exemplo, os 15 postos da Helexia no Auchan Cascais.
+- **Hub:** um lugar (centro comercial, área de serviço, parque…) com várias estações ou postos, normalmente de vários operadores. Por exemplo, o Centro Comercial Colombo.
 
-- **Import:** o `scripts/import-stations.ts` lê também `hubs`, para a tabela `hubs` e para `stations.hub_id`. Um hub que sai do modelo passa a `dissolved` e nunca se apaga, como os postos `missing_from_nap`.
-- **ID e link estático:** `HUB-` mais o elemento do OSM (`HUB-w42645796`, Centro Comercial Colombo). O link `pictures.ocarroeletrico.com/HUB-w42645796.jpg` serve a foto principal do hub (a vista geral), com as mesmas regras dos postos e das tomadas.
-- **Página `/hubs/{id}` (`/en/hubs/{id}`):**
+O **local** de um posto é o nível de cima que existir: o hub, ou a estação quando não há hub.
+
+O que é cada nível, os membros, o nome, como se corrige e o que quem lê o modelo pode esperar está no [`Docs/hubs.md` do Architecture](https://github.com/CarregaErvilhas/Architecture/blob/main/Docs/hubs.md), a cópia única do grupo. Só o NAP dashboard decide os locais (`stationAreas` e `hubs` no modelo da rede). O olh'o'posto não os define nem edita os nomes; esta secção é a parte dele.
+
+- **Import:** o `scripts/import-stations.ts` lê também `stationAreas` e `hubs`, para a tabela `locations` e para `stations.location_id` (o local de cada posto). Um local que sai do modelo passa a `dissolved` e nunca se apaga, como os postos `missing_from_nap`.
+- **ID e link estático:** o ID é o elemento do OSM com o prefixo do nível: `HUB-w42645796` (Centro Comercial Colombo) e `EST-w1355046979` (Auchan Cascais). O link `pictures.ocarroeletrico.com/HUB-w42645796.jpg` (ou `EST-….jpg`) serve a foto principal do local (a vista geral), com as mesmas regras dos postos e das tomadas.
+- **Página `/locais/{id}` (`/en/locations/{id}`):**
   - a vista geral;
   - «Como encontrar os carregadores»: a entrada e a sinalética;
-  - os postos do hub por operador, cada um com a sua página, fotos e links;
+  - num hub, as zonas (as estações e os postos soltos); numa estação, os postos;
   - os links estáticos e as fotos que faltam;
-  - o lugar no OSM e a ligação ao NAP dashboard.
-- **API e MCP:** `GET /api/v1/hubs/{id}` e a ferramenta `get_hub`. O `get_station` passa a dizer o hub do posto.
-- **Panoramax:** as fotos de um hub levam `OlhaOPosto|hub=HUB-w…` em vez de `OlhaOPosto|site`. As vistas gerais são fotos «ao nível da rua», o que ajuda na conversa sobre a federação.
-- **Pontos:** a primeira foto de um hub conta como a primeira de um posto.
-- **Quando um hub muda no modelo:**
+  - o elemento no OSM e a ligação ao NAP dashboard.
+- **API e MCP:** `GET /api/v1/locations/{id}` e a ferramenta `get_location`. O `get_station` passa a dizer o local do posto.
+- **Panoramax:** as fotos de um local levam `OlhaOPosto|location=HUB-w…` (ou `EST-w…`) em vez de `OlhaOPosto|site`. As vistas gerais são fotos «ao nível da rua», o que ajuda na conversa sobre a federação.
+- **Pontos:** a primeira foto de um local conta como a primeira de um posto.
+- **Quando um local muda no modelo:**
   - A área que fica no OSM mantém o ID, e nada muda.
-  - Um hub que se desfaz (área apagada, ou menos de dois postos) passa a `dissolved`:
+  - Um local que se desfaz passa a `dissolved`. Acontece quando a área é apagada, quando fica com menos de dois postos ou unidades, ou quando uma estação passa a estar dentro de um hub novo:
     - o link estático continua a servir a última principal, porque o link nunca muda;
-    - a página diz em que hubs foi dividido;
-    - as fotos «Local» dele aparecem na moderação para mover para os hubs novos.
+    - a página diz que locais o substituíram;
+    - as fotos «Local» dele aparecem na moderação para mover.
   - A mesma área redesenhada no OSM (ID novo, os mesmos postos): um moderador confirma o alias, com `301`, como nos aliases dos postos (`/admin/postos-fora-do-nap`).
-  - Os moderadores veem, depois de cada import, a lista dos hubs que mudaram.
+  - Os moderadores veem, depois de cada import, a lista dos locais que mudaram.
 
 ## Categorias das fotos
 
@@ -139,13 +144,13 @@ Hoje o envio pede primeiro o posto e só depois «O que mostra esta foto?» (pos
 
 | Categoria | Alvo | Pode ser principal |
 | --- | --- | --- |
-| Local | hub; `part`: vista geral, entrada ou sinalética | Só a vista geral |
+| Local | o local do posto: o hub, ou a estação quando não há hub; `part`: vista geral, entrada ou sinalética | Só a vista geral |
 | Posto | posto | Sim |
 | Tomada | tomada (código EVSE) | Sim |
 | Chapa | posto (o carregador) | Nunca |
 
 - **As categorias são uma lista no código,** `src/categories.ts`, como os motivos de recusa em `src/reasons.ts`. Cada entrada tem o nome em pt e en, o ícone, a cor, o nível do alvo e se pode ser principal. Uma categoria nova é uma entrada nessa lista mais a migração do `CHECK`. O nome, o ícone e a cor são os mesmos no envio, nas galerias, na moderação, na API e no MCP.
-- **Dados:** as colunas `photos.category` (com o `CHECK` da lista), `photos.hub_id` e `photos.part`. A migração das fotos que já existem:
+- **Dados:** as colunas `photos.category` (com o `CHECK` da lista), `photos.location_id` e `photos.part`. A migração das fotos que já existem:
   - `kind = 'plate'` → `chapa`;
   - `evse_compact` preenchido → `tomada`;
   - o resto → `posto`.
@@ -154,16 +159,16 @@ Hoje o envio pede primeiro o posto e só depois «O que mostra esta foto?» (pos
 - **Envio:**
   - A categoria passa a ser a primeira escolha, em quatro cartões, cada um com ícone, nome e uma frase.
   - Depois vem «Ligar a», que muda com a categoria:
-    - Local: o hub, pelo GPS da foto, e a parte (vista geral, entrada ou sinalética);
+    - Local: o hub ou a estação, pelo GPS da foto, e a parte (vista geral, entrada ou sinalética);
     - Posto: os postos do mais perto para o mais longe;
     - Tomada: o posto e o código do autocolante;
     - Chapa: o carregador.
   - Uma linha no fim diz o que acontece à foto: se pode passar a principal, ou se nunca passa.
-  - «Local» só aparece quando o posto pertence a um hub.
-- **Mover:** uma só função, `movePhoto` em `src/move.ts`. Usam-na a fila, a página de moderação de um hub ou posto, a API (`PATCH /api/v1/photos/{id}` com `category` e `target`, só para moderadores) e o MCP (`move_photo`). O que faz:
+  - «Local» só aparece quando o posto pertence a um hub ou a uma estação.
+- **Mover:** uma só função, `movePhoto` em `src/move.ts`. Usam-na a fila, a página de moderação de um local ou posto, a API (`PATCH /api/v1/photos/{id}` com `category` e `target`, só para moderadores) e o MCP (`move_photo`). O que faz:
   - Se a foto era a principal do alvo antigo, esse alvo fica em «Sem foto principal» e o link estático passa a `404`, como numa remoção.
   - Se o alvo novo não tem principal e a categoria o permite, a foto passa a principal, como numa aprovação.
-  - Atualiza no Panoramax as etiquetas `OlhaOPosto|kind`, `OlhaOPosto|site` e `OlhaOPosto|hub`, e repete o que falhar, como já se faz na fusão dos postos em construção (`site_tag_old`).
+  - Atualiza no Panoramax as etiquetas `OlhaOPosto|kind`, `OlhaOPosto|site` e `OlhaOPosto|location`, e repete o que falhar, como já se faz na fusão dos postos em construção (`site_tag_old`).
   - Os pontos passam a contar para o alvo novo.
   - O autor vê «Categoria corrigida para X» em «Os meus envios».
   - A mudança fica no histórico de decisões (`/admin/decisoes`), como uma ação nova.
@@ -172,7 +177,7 @@ Hoje o envio pede primeiro o posto e só depois «O que mostra esta foto?» (pos
   - A categoria e o alvo mudam-se antes de aprovar, com atalhos de 1 a 4 para a categoria.
   - Um quadro «O que muda» explica o efeito, e o botão passa a «Mudar para X e aprovar».
   - O `wrong_station` fica só para fotos de outro sítio.
-- **«Fotos de um hub ou posto»:** uma página nova de moderação. Mostra as fotos publicadas numa coluna por categoria, com seleção múltipla e «Mover para…». Avisa quando uma das fotos é a principal de algum alvo.
+- **«Fotos de um local ou posto»:** uma página nova de moderação. Mostra as fotos publicadas numa coluna por categoria, com seleção múltipla e «Mover para…». Avisa quando uma das fotos é a principal de algum alvo.
 - **Visitantes:** um «Categoria errada?» na página de crédito (`/p/{id}`), que aparece na moderação com uma bandeira. A política de privacidade muda no mesmo PR, se isto guardar alguma coisa nova.
 
 ## Custos
@@ -187,7 +192,7 @@ Orçamento: **10 €/mês** no total.
 
 - [ ] Lista de moderadores da comunidade.
 - [ ] «Categoria errada?» para visitantes: com ou sem conta, e o que se guarda.
-- [ ] Que coordenadas o Panoramax recebe para uma foto de hub: o centro do lugar ou o posto mais perto da foto.
+- [ ] Que coordenadas o Panoramax recebe para uma foto de um local: o centro da área ou o posto mais perto da foto.
 - [ ] Como correr a desfocagem no servidor com GPU de forma barata, em escala.
 - [ ] Modelo de deteção de matrículas para o browser, com pesos de licença permissiva.
 - [ ] Resposta da OSM Portugal e da equipa do Panoramax (federação, nome, bot).
