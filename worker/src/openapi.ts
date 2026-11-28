@@ -201,7 +201,13 @@ export function openApiSpec() {
           parameters: [idParam('target', 'Station id or compact EVSE code.', 'EZC-AMD-00051')],
           requestBody: { required: true, content: { 'application/json': { schema: { type: 'object', required: ['photo'], properties: { photo: { type: 'string', description: 'Photo id.' } } } } } },
           responses: {
-            200: json({ type: 'object', properties: { targets: { type: 'array', items: str } } }, 'The targets published (empty if the photo does not fit that target).'),
+            200: json({
+              type: 'object',
+              properties: {
+                targets: { type: 'array', items: str },
+                cachePending: { type: 'boolean', description: 'True when the edge cache could not be purged: the static links keep the old photo until a retry (every 6 hours) succeeds.' },
+              },
+            }, 'The targets published (empty if the photo does not fit that target).'),
             400: err('`bad_body` or `bad_photo`.'),
             502: err('`publish_failed`.'),
             ...FORBIDDEN_TOKEN,

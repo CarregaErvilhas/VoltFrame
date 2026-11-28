@@ -262,7 +262,7 @@ export async function promoteMain(request: Request, env: PublishEnv, fetcher: Fe
   if (!lost) return back('stale');
   try {
     const done = await chooseMain(env, target, photo.toLowerCase(), user.id, fetcher, now);
-    return back(done.length ? 'ok' : 'photo');
+    return back(done.targets.length ? 'ok' : 'photo');
   } catch {
     return back('publish');
   }

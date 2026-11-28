@@ -154,7 +154,7 @@ test('external photos are never a main photo, never in the lost list, never earn
     DB: db, PICTURES: { async put() {}, async delete() {} },
     STAGING: { async get() { return null; }, async delete() {} },
   } as unknown as PublishEnv;
-  assert.deepEqual(await chooseMain(env, ST, ext, 'ana'), []);
+  assert.deepEqual((await chooseMain(env, ST, ext, 'ana')).targets, []);
   assert.deepEqual(await publishMain(env, ext, 'ana'), []);
   assert.equal((db.sql.prepare('SELECT COUNT(*) AS n FROM selections').get() as { n: number }).n, 0);
   assert.deepEqual(await awardApproval(db as never, ext), []);

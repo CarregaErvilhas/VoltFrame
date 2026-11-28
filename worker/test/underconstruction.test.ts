@@ -145,7 +145,7 @@ test('a NAP station page shows its other published photos, never its main twice'
   await publishMergedMains(w.env, w.fetcher, NOW);
   const ctx = { waitUntil() {} } as never;
   const page = await (await worker.fetch(new Request(`${SITE}/postos/MOT-ALM-00114`), w.env as never, ctx)).text();
-  assert.ok(page.includes('src="https://pictures.ocarroeletrico.com/MOT-ALM-00114.jpg"'));
+  assert.ok(page.includes('src="https://pictures.ocarroeletrico.com/MOT-ALM-00114.jpg?v='));
   assert.ok(page.includes('Outras fotos'));
   assert.ok(page.includes(`href="/p/${B}"`));
   assert.ok(page.includes('/api/pictures/pic-b/thumb.jpg'));

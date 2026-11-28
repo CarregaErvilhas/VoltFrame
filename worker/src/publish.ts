@@ -18,7 +18,8 @@
 //
 // No cache purge is needed for a first photo: the Cache Rule on pictures.*
 // never stores a 4xx (Docs/cloudflare.md, section 3). Replacing a main photo
-// will need one; that is not built yet.
+// needs one (chooseMain): a purge that fails goes to purge_queue, which the
+// cron retries (drainPurgeQueue).
 
 import { isCleanJpeg, stripMetadata } from '../public/jpeg.js';
 import { PANORAMAX_URL, type PhotoEnv } from './photos.ts';
@@ -38,6 +39,7 @@ interface StagingBucket {
 interface Stmt {
   bind(...values: unknown[]): Stmt;
   first<T>(): Promise<T | null>;
+  all<T>(): Promise<{ results: T[] }>;
   run(): Promise<{ meta: { changes: number } }>;
 }
 export interface PublishEnv extends PhotoEnv {
@@ -210,11 +212,19 @@ export async function publishMain(
 // lost its main photo gets the next one: never on its own, always chosen by
 // a moderator (src/mains.ts), since the next photo may not be one anyone
 // would pick.
+export interface Chosen {
+  // Empty when the photo cannot be the main photo of that target.
+  targets: string[];
+  // The edge still serves the old copies: the purge failed and is queued.
+  cachePending: boolean;
+}
+
 export async function chooseMain(
   env: PublishEnv, target: string, photoId: string, userId: string,
   fetcher: Fetch = fetch, now = new Date(),
-): Promise<string[]> {
-  if (!env.PICTURES || !env.STAGING || !STATION_ID.test(target)) return [];
+): Promise<Chosen> {
+  const none: Chosen = { targets: [], cachePending: false };
+  if (!env.PICTURES || !env.STAGING || !STATION_ID.test(target)) return none;
   const p = await db(env).prepare(
     // A station under construction gets no main photo and no static link
     // until it merges into its NAP station (Docs/arquitetura.md, *Postos em construção*).
@@ -226,10 +236,10 @@ export async function chooseMain(
   // The target comes from the photo, not from its shape: a compact EVSE code
   // (PTEZCEAMD000511) also passes STATION_ID. A station takes only a photo of
   // the station in general; a socket, only a photo of that socket.
-  if (!p) return [];
+  if (!p) return none;
   const stationId = p.station_id;
   const ok = p.evse_compact ? target === p.evse_compact : target === p.station_id;
-  if (!ok) return [];
+  if (!ok) return none;
 
   const old = await db(env).prepare(
     `SELECT photo_id, published_at FROM selections WHERE target = ?`,
@@ -276,15 +286,19 @@ export async function chooseMain(
          credit_pending=0, lost_at=NULL`,
     ).bind(target, stationId, photoId, userId, nowIso, nowIso).run();
 
-    // Purge the cache for the three keys.
-    await purgeCache(env, targets, fetcher).catch(() => {});
+    // Purge the cache for the three keys. Without it the edge keeps the old
+    // photo for up to 30 days, under the new credit: a failure is queued for
+    // the cron (drainPurgeQueue) and told to the caller.
+    const urls = targets.flatMap(pictureUrls);
+    const purged = await purgeUrls(env, urls, fetcher).catch(() => false);
+    if (!purged) await queuePurge(env, urls, now).catch(() => {});
 
     // +2 for the author when the replaced main photo was over 12 months old.
     // A lost main photo has published_at NULL: filling a gap is no refresh.
     if (old && old.photo_id !== photoId) {
       await awardRefresh(env.DB as unknown as PointsDb, photoId, old.published_at, now).catch(() => false);
     }
-    return targets;
+    return { targets, cachePending: !purged };
   } catch (err) {
     await pictures.delete(written).catch(() => {});
     throw err;
@@ -295,24 +309,64 @@ export async function chooseMain(
 export const pictureUrls = (target: string) =>
   SIZES.map((size) => `${PICTURES}/${encodeURIComponent(target)}${size.suffix}.jpg`);
 
-async function purgeCache(env: PublishEnv, targets: string[], fetcher: Fetch): Promise<void> {
-  await purgeUrls(env, targets.flatMap(pictureUrls), fetcher);
-}
-
 // Purges URLs from the zone's edge cache. False when the secrets are missing
 // or Cloudflare says no: the caller decides whether that matters (a takedown
 // records it, since the Cache Rule keeps a 200 for 30 days).
+// Each failure goes to the Worker's logs with Cloudflare's own error codes
+// (never the token), the one place that says why.
 export async function purgeUrls(env: PublishEnv, files: string[], fetcher: Fetch): Promise<boolean> {
-  if (!env.CF_ZONE_ID || !env.CF_CACHE_PURGE_TOKEN) return false;
-  if (files.length === 0) return true;
-  try {
-    const r = await fetcher(`https://api.cloudflare.com/client/v4/zones/${env.CF_ZONE_ID}/purge_cache`, {
-      method: 'POST',
-      headers: { authorization: `Bearer ${env.CF_CACHE_PURGE_TOKEN}`, 'content-type': 'application/json' },
-      body: JSON.stringify({ files }),
-    });
-    return r.ok;
-  } catch {
-    return false;
+  return (await purge(env, files, fetcher)) === null;
+}
+
+// null when Cloudflare accepted the purge, otherwise why not.
+async function purge(env: PublishEnv, files: string[], fetcher: Fetch): Promise<string | null> {
+  if (files.length === 0) return null;
+  let error: string;
+  if (!env.CF_ZONE_ID || !env.CF_CACHE_PURGE_TOKEN) {
+    error = 'not configured: CF_ZONE_ID or CF_CACHE_PURGE_TOKEN missing';
+  } else {
+    try {
+      const r = await fetcher(`https://api.cloudflare.com/client/v4/zones/${env.CF_ZONE_ID}/purge_cache`, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${env.CF_CACHE_PURGE_TOKEN}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ files }),
+      });
+      if (r.ok) return null;
+      const body = await r.json().catch(() => null) as { errors?: { code?: number; message?: string }[] } | null;
+      const why = (body?.errors ?? []).map((e) => `${e.code ?? '?'} ${e.message ?? ''}`.trim()).join('; ');
+      error = `HTTP ${r.status}${why ? `: ${why}` : ''}`;
+    } catch (err) {
+      error = `request failed: ${err instanceof Error ? err.message : String(err)}`;
+    }
   }
+  console.error(`cache purge failed (${files.length} URLs): ${error}`);
+  return error.slice(0, 500);
+}
+
+async function queuePurge(env: PublishEnv, urls: string[], now: Date): Promise<void> {
+  for (const url of urls) {
+    await db(env).prepare(`INSERT OR IGNORE INTO purge_queue (url, queued_at) VALUES (?, ?)`)
+      .bind(url, now.toISOString()).run();
+  }
+}
+
+// Cloudflare takes up to 100 URLs per purge request on every plan.
+export const PURGE_BATCH = 100;
+
+// Retries the queued purges (the cron). A URL leaves the queue only once
+// Cloudflare accepted its purge; until then it keeps the last error, for the
+// logs and for whoever looks at the table. Returns how many were purged.
+export async function drainPurgeQueue(env: PublishEnv, fetcher: Fetch = fetch): Promise<number> {
+  const { results } = await db(env).prepare(`SELECT url FROM purge_queue ORDER BY queued_at, url LIMIT ?`)
+    .bind(PURGE_BATCH).all<{ url: string }>();
+  if (!results.length) return 0;
+  const urls = results.map((r) => r.url);
+  const error = await purge(env, urls, fetcher);
+  for (const url of urls) {
+    await (error === null
+      ? db(env).prepare(`DELETE FROM purge_queue WHERE url = ?`).bind(url)
+      : db(env).prepare(`UPDATE purge_queue SET attempts = attempts + 1, last_error = ? WHERE url = ?`).bind(error, url)
+    ).run();
+  }
+  return error === null ? urls.length : 0;
 }

@@ -420,9 +420,11 @@ export function mcpServer(env: McpEnv, caller: McpCaller | null, deps: McpDeps =
     const t = STATION_ID.test(target) && !target.includes('*') ? target : compactCode(target);
     if (!t) return fail('bad_target', ERROR_DETAIL.bad_target);
     try {
-      const targets = await chooseMain(env, t, photo, who.user.id, fetcher, now());
+      const { targets, cachePending } = await chooseMain(env, t, photo, who.user.id, fetcher, now());
       if (!targets.length) return fail('bad_photo', 'The photo is not published, or is not of that station or socket.');
-      return ok({ targets });
+      return ok(cachePending
+        ? { targets, cachePending, note: 'The cache purge failed: the static links keep serving the old photo until a retry succeeds (every 6 hours).' }
+        : { targets, cachePending });
     } catch {
       return fail('publish_failed', 'Copying the photo to the static links failed; try again later.');
     }

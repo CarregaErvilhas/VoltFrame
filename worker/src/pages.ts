@@ -14,6 +14,14 @@ export const BRAND = "olh'o'posto";
 export const BRAND_SPOKEN = 'Olha o posto';
 export const SITE = 'https://olhaoposto.ocarroeletrico.com';
 export const PICTURES = 'https://pictures.ocarroeletrico.com';
+
+// A static link as our own pages show it: with the main photo's id in the
+// query. The link itself never changes, so a browser that saw the old photo
+// would keep it for a day (max-age); a new query makes it fetch the new one.
+// The Cache Rule leaves the query out of the edge's key, so this costs no R2
+// read. Links meant to be copied stay without it.
+export const shownPicture = (target: string, suffix: '' | '.thumb' | '.full', photoId?: string | null) =>
+  `${PICTURES}/${encodeURIComponent(target)}${suffix}.jpg${photoId ? `?v=${encodeURIComponent(photoId.slice(0, 8))}` : ''}`;
 export const PANORAMAX_URL = 'https://panoramax.ocarroeletrico.com';
 export const NAP_DASHBOARD = 'https://nap.ocarroeletrico.com';
 
@@ -588,7 +596,7 @@ function tagRow(id: string, text: string, label: string): string {
 
 // The thumbnail of a socket's main photo, linked to its credit page.
 function thumb(lang: Lang, compact: string, main: MainPhotos[string]): string {
-  const img = `<img class="thumb" src="${PICTURES}/${encodeURIComponent(compact)}.thumb.jpg" alt="${esc(T[lang].creditAlt(compact))}" loading="lazy">`;
+  const img = `<img class="thumb" src="${shownPicture(compact, '.thumb', main.photo_id)}" alt="${esc(T[lang].creditAlt(compact))}" loading="lazy">`;
   return main.photo_id ? `<a href="${photoPath(lang, main.photo_id)}">${img}</a>` : img;
 }
 
@@ -729,7 +737,7 @@ ${missing ? `<p class="notice">${t.missingNotice}</p>\n` : ''}${building ? `<p c
     <h2 class="sr-only">${t.photosHeading}</h2>
     ${building && pics.length ? ownGallery(lang, s.id, pics) : main
       ? `<figure class="main-photo">
-      <a href="${PICTURES}/${encodeURIComponent(s.id)}.full.jpg" target="_blank" rel="noopener"><img src="${PICTURES}/${encodeURIComponent(s.id)}.jpg" alt="${esc(t.photoAlt(s.id))}"></a>
+      <a href="${shownPicture(s.id, '.full', main.photo_id)}" target="_blank" rel="noopener"><img src="${shownPicture(s.id, '', main.photo_id)}" alt="${esc(t.photoAlt(s.id))}"></a>
       <figcaption>${t.photoBy} ${main.photo_id ? `<a href="${photoPath(lang, main.photo_id)}">` : ''}<span lang="">${esc(main.credit ?? BRAND)}</span>${main.photo_id ? '</a>' : ''} · <a href="https://creativecommons.org/licenses/by-sa/4.0/deed.${lang === 'pt' ? 'pt' : 'en'}" rel="license noopener" target="_blank">CC BY-SA 4.0</a> · <a href="${lang === 'pt' ? '/report' : '/en/report'}?alvo=${encodeURIComponent(s.id)}" rel="nofollow">${t.askRemoval}</a></figcaption>
     </figure>`
       : `<div class="empty-photo">
@@ -796,7 +804,7 @@ ${missing ? `<p class="notice">${t.missingNotice}</p>\n` : ''}${building ? `<p c
     script: true,
     // A station being built has no static links yet.
     image: main && !building
-      ? { url: `${PICTURES}/${encodeURIComponent(s.id)}.jpg`, alt: `${t.photoAlt(s.id)} · © ${main.credit ?? BRAND}, CC BY-SA 4.0` }
+      ? { url: shownPicture(s.id, '', main.photo_id), alt: `${t.photoAlt(s.id)} · © ${main.credit ?? BRAND}, CC BY-SA 4.0` }
       : undefined,
   });
 }

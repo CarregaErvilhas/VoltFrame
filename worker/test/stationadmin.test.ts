@@ -5,6 +5,9 @@ import { test } from 'node:test';
 import { tokenHash } from '../src/auth.ts';
 import worker from '../src/index.ts';
 import { stationAdminAction } from '../src/stationadmin.ts';
+import { drainPurgeQueue } from '../src/publish.ts';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { d1 } from './d1.ts';
 
 const SITE = 'https://olhaoposto.ocarroeletrico.com';
@@ -54,6 +57,7 @@ async function world() {
   const fetcher = async (url: string) => (String(url).endsWith('/hd.jpg') ? new Response(jpeg(2048, 1536)) : new Response('{}'));
   const env = {
     DB: db, PANORAMAX_TOKEN: 'token', PANORAMAX_URL: 'https://pano.test',
+    CF_ZONE_ID: 'zone', CF_CACHE_PURGE_TOKEN: 'purge' as string | undefined,
     PICTURES: { async put(k: string) { r2.set(k, (r2.get(k) ?? 0) + 1); }, async delete(keys: string[]) { for (const k of keys) r2.delete(k); } },
     STAGING: { async get(k: string) { const b = staging.get(k); return b ? { arrayBuffer: async () => b.buffer } : null; }, async delete() {} },
   };
@@ -186,4 +190,81 @@ test('move: a photo goes to a socket or the plates, its Panoramax tags follow, t
   assert.equal(row(A).kind, 'photo');
   // Unknown socket.
   assert.match((await move(S, 'PTNOPE1')).headers.get('location')!, /r=bad/);
+});
+
+test('a purge that fails is queued, told to the moderator, and retried by the cron until Cloudflare accepts', async () => {
+  const w = await world();
+  const purges: { files: string[] }[] = [];
+  let cloudflare: 'down' | 'up' = 'down';
+  const fetcher = async (url: string, init?: RequestInit) => {
+    if (String(url).includes('/purge_cache')) {
+      purges.push(JSON.parse(String(init!.body)));
+      return cloudflare === 'up'
+        ? new Response('{"success":true}')
+        : new Response('{"success":false,"errors":[{"code":10000,"message":"Authentication error"}]}', { status: 403 });
+    }
+    return w.fetcher(url);
+  };
+  const errors: unknown[] = [];
+  const log = console.error;
+  console.error = (...a: unknown[]) => { errors.push(a.join(' ')); };
+  try {
+    const r = await stationAdminAction(post({ action: 'promote', station: 'EZC-AMD-00051', target: 'EZC-AMD-00051', photo: B, lang: 'pt' }), w.env as never, fetcher as never, NOW);
+    assert.match(r.headers.get('location')!, /\?r=cache#t-EZC-AMD-00051$/);
+    // The swap itself went through: D1 and R2 have the new photo.
+    assert.equal(w.db.sql.prepare('SELECT photo_id FROM selections WHERE target = ?').get('EZC-AMD-00051')!.photo_id, B);
+    const queued = () => (w.db.sql.prepare('SELECT url, attempts, last_error FROM purge_queue ORDER BY url').all() as { url: string; attempts: number; last_error: string | null }[]);
+    assert.deepEqual(queued().map((q) => q.url), [
+      'https://pictures.ocarroeletrico.com/EZC-AMD-00051.full.jpg',
+      'https://pictures.ocarroeletrico.com/EZC-AMD-00051.jpg',
+      'https://pictures.ocarroeletrico.com/EZC-AMD-00051.thumb.jpg',
+    ]);
+    // Cloudflare's reason reaches the logs, never the token.
+    assert.ok(errors.some((e) => String(e).includes('HTTP 403: 10000 Authentication error')));
+    assert.ok(!errors.some((e) => String(e).includes('purge') && String(e).includes("'purge'")));
+
+    // The cron: still down, the URLs stay with the error.
+    assert.equal(await drainPurgeQueue(w.env as never, fetcher as never), 0);
+    assert.equal(queued().length, 3);
+    assert.ok(queued().every((q) => q.attempts === 1 && q.last_error!.includes('Authentication error')));
+    // Up again: one request with the three URLs, and the queue empties.
+    cloudflare = 'up';
+    assert.equal(await drainPurgeQueue(w.env as never, fetcher as never), 3);
+    assert.equal(queued().length, 0);
+    assert.equal(purges.at(-1)!.files.length, 3);
+    assert.equal(await drainPurgeQueue(w.env as never, fetcher as never), 0);
+
+    // Without the purge secrets: queued as well, with the reason in the logs.
+    w.env.CF_CACHE_PURGE_TOKEN = undefined;
+    const r2 = await stationAdminAction(post({ action: 'promote', station: 'EZC-AMD-00051', target: 'EZC-AMD-00051', photo: A, lang: 'pt' }), w.env as never, fetcher as never, NOW);
+    assert.match(r2.headers.get('location')!, /\?r=cache/);
+    assert.equal(queued().length, 3);
+    assert.ok(errors.some((e) => String(e).includes('not configured')));
+  } finally {
+    console.error = log;
+  }
+});
+
+test('the purge queue migration queues every live static link once', () => {
+  const db = d1();
+  // Only the selections matter here.
+  db.sql.exec('PRAGMA foreign_keys = OFF');
+  db.sql.exec(`
+    INSERT INTO selections (target, station_id, photo_id, chosen_by, chosen_at, published_at, lost_at) VALUES
+      ('EZC-AMD-00051', 'EZC-AMD-00051', 'a', 'u', '2026-01-01', '2026-01-01', NULL),
+      ('PTEZCEAMD000511', 'EZC-AMD-00051', 'b', 'u', '2026-01-01', '2026-01-01', NULL),
+      ('EZC-AMD-00052', 'EZC-AMD-00052', 'c', 'u', '2026-01-01', NULL, '2026-01-02'),
+      ('EZC-AMD-00053', 'EZC-AMD-00053', 'd', 'u', '2026-01-01', NULL, NULL);
+  `);
+  const sql = readFileSync(join(import.meta.dirname, '..', 'migrations', '0020_purge_queue.sql'), 'utf8');
+  db.sql.exec(sql.slice(sql.indexOf('INSERT OR IGNORE')));
+  const urls = (db.sql.prepare('SELECT url FROM purge_queue ORDER BY url').all() as { url: string }[]).map((r) => r.url);
+  assert.deepEqual(urls, [
+    'https://pictures.ocarroeletrico.com/EZC-AMD-00051.full.jpg',
+    'https://pictures.ocarroeletrico.com/EZC-AMD-00051.jpg',
+    'https://pictures.ocarroeletrico.com/EZC-AMD-00051.thumb.jpg',
+    'https://pictures.ocarroeletrico.com/PTEZCEAMD000511.full.jpg',
+    'https://pictures.ocarroeletrico.com/PTEZCEAMD000511.jpg',
+    'https://pictures.ocarroeletrico.com/PTEZCEAMD000511.thumb.jpg',
+  ]);
 });
