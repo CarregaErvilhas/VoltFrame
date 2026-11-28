@@ -8,7 +8,7 @@
 // mapper add the photo to OpenStreetMap by hand: a link that opens the editor
 // and the tag to copy. No bot and no automatic edit (Docs/plan.md, *OSM*).
 import {
-  BRAND, esc, layout, osmEditUrl, PANORAMAX_URL, PICTURES, photoPath, socketAnchor, stationPath, type Lang,
+  BRAND, esc, layout, osmEditUrl, PANORAMAX_URL, photoPath, shownPicture, socketAnchor, stationPath, type Lang,
 } from './pages.ts';
 import { isPublic } from './types.ts';
 
@@ -114,7 +114,7 @@ const dateOf = (r: CreditRow) => (r.taken_at ?? r.approved_at ?? r.created_at ??
 // published photo is shown from Panoramax, which serves it publicly once approved.
 export const creditImage = (r: CreditRow) =>
   r.is_main
-    ? `${PICTURES}/${encodeURIComponent(r.evse_compact ?? r.station_id)}.jpg`
+    ? shownPicture(r.evse_compact ?? r.station_id, '', r.id)
     : r.panoramax_id ? `${PANORAMAX_URL}/api/pictures/${encodeURIComponent(r.panoramax_id)}/sd.jpg` : null;
 
 export function creditPage(lang: Lang, r: CreditRow): string {

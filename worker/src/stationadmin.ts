@@ -65,6 +65,7 @@ const T = {
     notFound: 'Este posto não existe.',
     results: {
       promoted: 'Feito: é a nova foto principal.',
+      cache: 'É a nova foto principal, mas a cache da Cloudflare não foi limpa: os links estáticos ainda mostram a antiga. Tentamos outra vez de 6 em 6 horas; os logs do Worker dizem porquê.',
       removed: 'Foto removida.',
       bad: 'Pedido inválido.',
       photo: 'Esta foto não está publicada, ou não é deste alvo.',
@@ -106,6 +107,7 @@ const T = {
     notFound: 'This station does not exist.',
     results: {
       promoted: 'Done: it is the new main photo.',
+      cache: 'It is the new main photo, but the Cloudflare cache was not cleared: the static links still show the old one. We try again every 6 hours; the Worker logs say why.',
       removed: 'Photo removed.',
       bad: 'Invalid request.',
       photo: 'This photo is not published, or not of this target.',
@@ -323,7 +325,7 @@ export async function stationAdminAction(
   if (action === 'promote') {
     try {
       const done = await chooseMain(env, target, id, user.id, fetcher, now);
-      return back(done.length ? 'promoted' : 'photo');
+      return back(!done.targets.length ? 'photo' : done.cachePending ? 'cache' : 'promoted');
     } catch {
       return back('publish');
     }

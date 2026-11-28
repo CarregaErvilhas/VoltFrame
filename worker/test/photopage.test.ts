@@ -65,7 +65,7 @@ test('credit page: OSM tag only for the current main photo', async () => {
   assert.ok(other.includes('https://panoramax.ocarroeletrico.com/api/pictures/pano-2/sd.jpg'));
   assert.ok(!other.includes('pictures.ocarroeletrico.com/S1'));
   // Link previews use the same photo, with the attribution.
-  assert.ok(main.includes('<meta property="og:image" content="https://pictures.ocarroeletrico.com/S1.jpg">'));
+  assert.ok(main.includes('<meta property="og:image" content="https://pictures.ocarroeletrico.com/S1.jpg?v=main1">'));
   assert.ok(other.includes('<meta property="og:image" content="https://panoramax.ocarroeletrico.com/api/pictures/pano-2/sd.jpg">'));
   assert.match(other, /<meta property="og:image:alt" content="[^"]+ · © [^"]+, CC BY-SA 4\.0, via olh&#39;o&#39;posto">/);
   assert.ok(other.includes('<meta name="twitter:card" content="summary_large_image">'));

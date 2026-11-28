@@ -381,11 +381,11 @@ test('chooseMain publishes a socket photo on the socket target', async () => {
   const w = await world();
   w.db.sql.exec(`DELETE FROM selections`);
   w.r2.clear();
-  const targets = await chooseMain(w.env, 'PTEZCEAMD000511', PHOTO, 'mod', w.fetcher, NOW);
+  const { targets } = await chooseMain(w.env, 'PTEZCEAMD000511', PHOTO, 'mod', w.fetcher, NOW);
   assert.deepEqual(targets, ['PTEZCEAMD000511']);
   assert.ok(w.r2.has('PTEZCEAMD000511.full.jpg'));
   // A socket photo is not a station photo.
-  assert.deepEqual(await chooseMain(w.env, 'EZC-AMD-00051', PHOTO, 'mod', w.fetcher, NOW), []);
+  assert.deepEqual((await chooseMain(w.env, 'EZC-AMD-00051', PHOTO, 'mod', w.fetcher, NOW)).targets, []);
 });
 
 test('admin panel: report text escaped, buttons only for our photos, overdue shown', () => {

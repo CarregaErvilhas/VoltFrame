@@ -12,7 +12,7 @@ import { ACCOUNT_ACTION, accountAction, accountHtml } from './account.ts';
 import { callback, login, logout } from './auth.ts';
 import { apiCaller, canChooseMain } from './tokens.ts';
 import { submitPhoto, uploadHtml, type PhotoEnv } from './photos.ts';
-import { chooseMain } from './publish.ts';
+import { chooseMain, drainPurgeQueue } from './publish.ts';
 import { syncCredits } from './credit.ts';
 import { RETRY_AFTER, allowed, clientIp, type RateEnv } from './ratelimit.ts';
 import { filterStations, findEvse, getStation, listMainPhotos, listStations, nearStations, recentPhotoStations, searchStations, type Env } from './data.ts';
@@ -383,8 +383,8 @@ async function setSelection(request: Request, env: Env & PhotoEnv, ctx: Executio
   try { body = await request.json(); } catch { return json({ error: 'bad_body' }, 400, 'no-store'); }
   if (!body.photo) return json({ error: 'bad_photo' }, 400, 'no-store');
   try {
-    const targets = await chooseMain(env, target, body.photo, user.id, fetch, new Date());
-    return json({ targets });
+    const { targets, cachePending } = await chooseMain(env, target, body.photo, user.id, fetch, new Date());
+    return json({ targets, cachePending }, 200, 'no-store');
   } catch {
     return json({ error: 'publish_failed' }, 502, 'no-store');
   }
@@ -527,6 +527,7 @@ export default {
   async scheduled(_event: ScheduledController, env: Env & TakedownEnv & OAuthEnv, ctx: ExecutionContext): Promise<void> {
     ctx.waitUntil(reconcile(env, fetch).catch(() => {}).then(() => syncCredits(env, fetch)).catch(() => {})
       .then(() => afterMerges(env, fetch)).catch(() => {})
+      .then(() => drainPurgeQueue(env, fetch)).catch(() => {})
       .then(async () => { if (env.OAUTH_KV) await (await oauth()).purgeOAuth(env); }).catch(() => {}));
   },
 } satisfies ExportedHandler<Env & TakedownEnv & OAuthEnv>;
